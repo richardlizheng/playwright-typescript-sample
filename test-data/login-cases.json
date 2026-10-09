@@ -1,0 +1,23 @@
+{
+  "valid": [
+    {
+      "title": "standard user lands on the products page",
+      "username": "standard_user",
+      "tags": ["@smoke"]
+    }
+  ],
+  "invalid": [
+    {
+      "title": "locked-out user sees an error",
+      "username": "locked_out_user",
+      "password": "from-env",
+      "error": "Epic sadface: Sorry, this user has been locked out."
+    },
+    {
+      "title": "empty password shows an error",
+      "username": "standard_user",
+      "password": "empty",
+      "error": "Epic sadface: Password is required"
+    }
+  ]
+}

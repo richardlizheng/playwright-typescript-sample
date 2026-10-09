@@ -1,0 +1,50 @@
+name: Playwright Tests
+
+on:
+  push: { branches: [main] }
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with: { node-version: 22, cache: npm }
+
+      - run: npm ci
+
+      # Fast checks first: no point starting browsers if the code does not compile.
+      - run: npm run lint
+      - run: npm run typecheck
+
+      - run: npx playwright install --with-deps chrome msedge ffmpeg
+
+      # URLs are not secret, so they are repository variables.
+      # Credentials are secrets: masked in logs and never written in this file.
+      # Set both in GitHub > Settings > Secrets and variables > Actions.
+      - run: npx playwright test
+        env:
+          SAUCE_BASE_URL: ${{ vars.SAUCE_BASE_URL }}
+          INTERNET_BASE_URL: ${{ vars.INTERNET_BASE_URL }}
+          BOOKER_API_URL: ${{ vars.BOOKER_API_URL }}
+          SAUCE_USER: ${{ secrets.SAUCE_USER }}
+          SAUCE_PASSWORD: ${{ secrets.SAUCE_PASSWORD }}
+          BOOKER_USER: ${{ secrets.BOOKER_USER }}
+          BOOKER_PASSWORD: ${{ secrets.BOOKER_PASSWORD }}
+
+      # On failure, print a summary of failures by cause in the job log.
+      - run: npm run triage
+        if: ${{ failure() }}
+
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            reports/
+          retention-days: 14

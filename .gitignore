@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Secrets — only .env.example is committed
+.env
+.env.*
+!.env.example
+
+# Saved login state (contains a live session cookie)
+.auth/
+
+# Test output
+test-results/
+playwright-report/
+reports/
+blob-report/
+
+# OS / editor
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
