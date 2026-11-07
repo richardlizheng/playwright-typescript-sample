@@ -1,0 +1,93 @@
+# Azure DevOps version of .github/workflows/playwright.yml. Setup steps: docs/AZURE_DEVOPS.md
+trigger:
+  branches: { include: [main] }
+pr:
+  branches: { include: [main] }
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  # Library > Variable groups > playwright-sample: the seven names from .env.example.
+  # Mark the user names and passwords as secret.
+  - group: playwright-sample
+  # Azure Pipelines sets TF_BUILD, not CI. playwright.config.ts reads CI for retries and forbidOnly.
+  - name: CI
+    value: 'true'
+  # Pull requests fail when a locator needed healing; main only reports it.
+  - name: SELF_HEALING
+    value: $[ iif(eq(variables['Build.Reason'], 'PullRequest'), 'fail', 'report') ]
+  - name: npm_config_cache
+    value: $(Pipeline.Workspace)/.npm
+
+jobs:
+  - job: test
+    displayName: Playwright tests
+    timeoutInMinutes: 20
+    steps:
+      - checkout: self
+        fetchDepth: 1
+
+      - task: UseNode@1
+        inputs: { version: 22.x }
+
+      - task: Cache@2
+        displayName: Cache npm
+        inputs:
+          key: 'npm | "$(Agent.OS)" | package-lock.json'
+          restoreKeys: 'npm | "$(Agent.OS)"'
+          path: $(npm_config_cache)
+
+      - script: npm ci
+        displayName: Install dependencies
+
+      # Fast checks first: no point starting browsers if the code does not compile.
+      - script: npm run lint
+        displayName: Lint
+      - script: npm run typecheck
+        displayName: Typecheck
+
+      - script: npx playwright install --with-deps chrome msedge ffmpeg
+        displayName: Install browsers
+
+      # Secret variables are not passed to scripts automatically, so each one is mapped here.
+      # Every name must exist in the variable group: an undefined $(NAME) stays as the literal text.
+      - script: npx playwright test
+        displayName: Run tests
+        env:
+          SAUCE_BASE_URL: $(SAUCE_BASE_URL)
+          INTERNET_BASE_URL: $(INTERNET_BASE_URL)
+          BOOKER_API_URL: $(BOOKER_API_URL)
+          SAUCE_USER: $(SAUCE_USER)
+          SAUCE_PASSWORD: $(SAUCE_PASSWORD)
+          BOOKER_USER: $(BOOKER_USER)
+          BOOKER_PASSWORD: $(BOOKER_PASSWORD)
+
+      # On failure, print a summary of failures by cause in the job log.
+      - script: npm run triage
+        displayName: Triage failures
+        condition: failed()
+
+      # Results appear in the run's Tests tab, with retries and history.
+      - task: PublishTestResults@2
+        displayName: Publish test results
+        condition: succeededOrFailed()
+        inputs:
+          testResultsFormat: JUnit
+          testResultsFiles: reports/junit.xml
+          testRunTitle: Playwright
+          failTaskOnMissingResultsFile: false
+
+      # The attempt number keeps artifact names unique when a failed job is re-run.
+      - task: PublishPipelineArtifact@1
+        displayName: Upload HTML report
+        condition: succeededOrFailed()
+        inputs:
+          targetPath: playwright-report
+          artifact: playwright-report-$(System.JobAttempt)
+      - task: PublishPipelineArtifact@1
+        displayName: Upload JSON reports and self-healing suggestions
+        condition: succeededOrFailed()
+        inputs:
+          targetPath: reports
+          artifact: reports-$(System.JobAttempt)

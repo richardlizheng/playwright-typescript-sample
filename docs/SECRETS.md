@@ -62,6 +62,8 @@ withCredentials([usernamePassword(credentialsId: 'sauce-demo',
 - **Azure Key Vault**: link the vault to a variable group, or use the `AzureKeyVault@2` task.
   The secrets then work like the secret variables above. Rotation happens in the vault, not in the pipeline.
 
+The full pipeline is [`azure-pipelines.yml`](../azure-pipelines.yml); setup steps are in [AZURE_DEVOPS.md](AZURE_DEVOPS.md).
+
 ## Why `.auth/` is git-ignored
 
 [`tests/auth.setup.ts`](../tests/auth.setup.ts) logs in once and saves the browser state to `.auth/user.json`.

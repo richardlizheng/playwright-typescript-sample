@@ -14,7 +14,7 @@ UI and API tests for three public practice sites, written with Playwright and Ty
 | Setup from zero | [Quick start](#quick-start), [How I built this from zero](#how-i-built-this-from-zero) |
 | Credentials and secrets | [`.env.example`](.env.example), [`utils/env.ts`](utils/env.ts), [workflow](.github/workflows/playwright.yml), [`docs/SECRETS.md`](docs/SECRETS.md) |
 | Locators and verifying them | [`docs/LOCATORS.md`](docs/LOCATORS.md), [`pages/`](pages/) |
-| Self-healing locators (ported from Sloth-Python) | [`docs/SELF_HEALING.md`](docs/SELF_HEALING.md), [`utils/self-healing/`](utils/self-healing/), [`tests/self-healing/`](tests/self-healing/) |
+| Self-healing locators (ported from Sloth-Python) | [`docs/SELF_HEALING.md`](docs/SELF_HEALING.md), [`utils/self-healing/`](utils/self-healing/), [`tests/self-healing/`](tests/self-healing/), [`scripts/apply-healing.ts`](scripts/apply-healing.ts) |
 | Page objects and fixtures | [`pages/`](pages/), [`fixtures/test-fixtures.ts`](fixtures/test-fixtures.ts) |
 | Data-driven tests | [`tests/sauce/login.spec.ts`](tests/sauce/login.spec.ts), [`test-data/login-cases.json`](test-data/login-cases.json) |
 | End-to-end flow with steps | [`tests/sauce/checkout.spec.ts`](tests/sauce/checkout.spec.ts) |
@@ -24,7 +24,7 @@ UI and API tests for three public practice sites, written with Playwright and Ty
 | Log in once, reuse the session | [`tests/auth.setup.ts`](tests/auth.setup.ts), [`playwright.config.ts`](playwright.config.ts) |
 | API tests | [`tests/api/booking.api.spec.ts`](tests/api/booking.api.spec.ts) |
 | Edge and Chrome | [`playwright.config.ts`](playwright.config.ts) |
-| CI | [`.github/workflows/playwright.yml`](.github/workflows/playwright.yml) |
+| CI | [`.github/workflows/playwright.yml`](.github/workflows/playwright.yml), [`azure-pipelines.yml`](azure-pipelines.yml) ([setup](docs/AZURE_DEVOPS.md)) |
 | Lint rules against flaky patterns | [`eslint.config.mjs`](eslint.config.mjs) |
 | Repairing a broken suite | [`docs/REPAIR_PLAYBOOK.md`](docs/REPAIR_PLAYBOOK.md), [`scripts/triage-failures.ts`](scripts/triage-failures.ts), [`examples/before-after/`](examples/before-after/) |
 
@@ -53,6 +53,7 @@ Playwright prints a notice and keeps your installed browser.
 | `npm run test:chrome` / `npm run test:edge` | One browser only |
 | `npm run test:api` | API tests only |
 | `npm run test:healing` | Local self-healing tests on Chrome + Edge; no `.env` or external sites |
+| `npm run healing:apply` | Show the locator changes suggested by the last run; `-- --write` applies them |
 | `npm run test:stability` | Every test 10 times (`--repeat-each=10`) |
 | `npm run report` | Open the last HTML report |
 | `npm run codegen` | Record actions and pick locators |
@@ -72,7 +73,8 @@ Playwright prints a notice and keeps your installed browser.
 
 ```
 .github/workflows/playwright.yml   CI: lint, typecheck, tests on Chrome + Edge, report upload
-docs/                              LOCATORS.md, SECRETS.md, REPAIR_PLAYBOOK.md
+azure-pipelines.yml                the same pipeline for Azure DevOps
+docs/                              LOCATORS.md, SECRETS.md, REPAIR_PLAYBOOK.md, AZURE_DEVOPS.md
 docs/SELF_HEALING.md                Python analysis, TypeScript changes and usage (中文)
 locators/                          JSON primary/fallback strategies and expected DOM features
 examples/before-after/             a brittle test and its fixed version (never run)
@@ -80,6 +82,7 @@ fixtures/test-fixtures.ts          `test` extended with page objects
 pages/sauce/                       LoginPage, InventoryPage, CartPage, CheckoutPage
 pages/internet/                    DynamicLoadingPage, DynamicControlsPage, ChallengingDomPage
 scripts/triage-failures.ts         groups failures from reports/results.json
+scripts/apply-healing.ts           turns reports/self-healing.json into locator JSON changes
 test-data/login-cases.json         usernames and expected errors (passwords come from env)
 tests/auth.setup.ts                logs in once, saves .auth/user.json
 tests/sauce/                       login (data-driven), cart and checkout
@@ -89,7 +92,7 @@ tests/api/booking.api.spec.ts      Restful Booker CRUD with a token
 tests/self-healing/                local browser recovery tests and locator-store checks
 utils/env.ts                       reads env variables, fails fast if one is missing
 utils/navigation.ts                openPage(): fails at once if the site returns an error page
-utils/self-healing/                scoped recovery, similarity scoring and optional JSON updates
+utils/self-healing/                scoped recovery, similarity scoring, suggestion reporter
 playwright.healing.config.ts       standalone self-healing tests without login setup
 playwright.config.ts               projects: setup, api, chrome, edge
 ```
@@ -117,7 +120,7 @@ How I verify a locator before I trust it:
 
 ESLint blocks `waitForTimeout`, `force: true`, `page.$` and absolute XPath. Details: [docs/LOCATORS.md](docs/LOCATORS.md).
 
-`ChallengingDomPage.editRow()` also demonstrates opt-in self-healing: primary locator → fallbacks → DOM similarity within the selected row. It rejects ambiguous recovery candidates, records recoveries in the report, and defaults to read-only JSON. It uses deterministic string matching, with no AI service or new dependency. Analysis of the original Python implementation and the adjusted TypeScript behavior: [docs/SELF_HEALING.md](docs/SELF_HEALING.md).
+Page objects use plain locators. Self-healing is a separate, opt-in helper (`selfHealing` fixture): the primary and fallback locators race in one wait budget, then DOM similarity runs inside a given scope, such as one table row. It rejects ambiguous or near-miss candidates, never edits files during a run, and collects suggestions in `reports/self-healing.json` for `npm run healing:apply`. `SELF_HEALING=off|report|fail` controls it; pull-request pipelines use `fail`. It uses deterministic string matching, with no AI service or new dependency. Details: [docs/SELF_HEALING.md](docs/SELF_HEALING.md).
 
 ## Credentials and secrets
 
@@ -128,12 +131,13 @@ ESLint blocks `waitForTimeout`, `force: true`, `page.$` and absolute XPath. Deta
 - `.auth/user.json` holds a live session cookie, so it is git-ignored too.
 
 These sites publish their practice credentials. I still keep them in `.env` and CI secrets to show the pattern.
-Jenkins and Azure DevOps versions: [docs/SECRETS.md](docs/SECRETS.md).
+Jenkins and Azure DevOps versions: [docs/SECRETS.md](docs/SECRETS.md). Azure Pipelines setup: [docs/AZURE_DEVOPS.md](docs/AZURE_DEVOPS.md).
 
 ## Running in CI
 
 The workflow runs on every push to `main`, on pull requests, and on demand:
 `npm ci` → lint → typecheck → install Chrome and Edge → run all projects → upload the HTML report (kept 14 days).
+[`azure-pipelines.yml`](azure-pipelines.yml) runs the same steps in Azure DevOps and also publishes JUnit results to the run's *Tests* tab.
 
 Setup on GitHub: *Settings → Secrets and variables → Actions*.
 
