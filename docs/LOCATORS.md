@@ -76,8 +76,10 @@ A quick check inside a test: `await expect(locator).toHaveCount(1)` before you a
 
 ## Self-healing example
 
-`ChallengingDomPage.editRow()` uses the same exact row scope, then attempts its primary locator,
-configured fallbacks, and finally DOM similarity. Recovery requires a clear winner and a unique
-selector; strict mode and normal click checks remain enabled. The fixture records recoveries in
-the report and leaves the locator JSON unchanged. See [SELF_HEALING.md](SELF_HEALING.md) for
-the Sloth-Python analysis, implementation differences, opt-in persistence and local test command.
+Page objects keep plain locators: a good locator does not need healing, and healing must never hide
+a product change. The opt-in `selfHealing` fixture shows the alternative on a scope you choose,
+for example `selfHealing.click(challengingDomPage.row('Iuvaret7'), 'challengingDom.edit')`:
+primary and fallbacks race in one wait budget, then DOM similarity runs inside that row only.
+Recovery requires a clear winner and a unique, stable selector; strict mode and normal click checks
+stay on. Suggestions go to `reports/self-healing.json`, never straight into the locator JSON.
+See [SELF_HEALING.md](SELF_HEALING.md).

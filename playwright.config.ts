@@ -22,6 +22,9 @@ export default defineConfig({
     ['list'],
     ['html', { open: 'never' }],
     ['json', { outputFile: 'reports/results.json' }],
+    // For the Tests tab in Azure DevOps (PublishTestResults@2) and Jenkins (junit step).
+    ['junit', { outputFile: 'reports/junit.xml' }],
+    ['./utils/self-healing/healing-reporter.ts'],
   ],
   use: {
     baseURL: env.sauceBaseUrl,

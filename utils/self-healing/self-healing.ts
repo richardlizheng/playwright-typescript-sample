@@ -1,7 +1,7 @@
 import { errors, type Locator } from '@playwright/test';
 import { rankCandidates } from './dom-similarity';
 import { LocatorStore } from './locator-store';
-import type { LocatorRoot, RecoveryEvent, Strategy } from './types';
+import { HEALING_MODES, type HealingMode, type LocatorRoot, type RecoveryEvent, type Strategy } from './types';
 
 function cssString(value: string): string {
   const escaped = [...value].map((character) => {
@@ -26,21 +26,30 @@ export function buildLocator(root: LocatorRoot, strategy: Strategy): Locator {
 }
 
 type Options = {
+  // One wait budget shared by the primary and all fallbacks, which race each other.
   timeoutMs?: number;
   minScore?: number;
   minMargin?: number;
-  autoUpdate?: boolean;
+  // false: the primary locator only, exactly like a plain Playwright locator.
+  heal?: boolean;
   onRecovery?: (event: RecoveryEvent) => void;
 };
 
 type Resolution = { locator: Locator; event?: RecoveryEvent };
+
+export function healingMode(value = 'report'): HealingMode {
+  if (!(HEALING_MODES as readonly string[]).includes(value)) {
+    throw new Error(`SELF_HEALING must be one of ${HEALING_MODES.join(', ')}, not "${value}"`);
+  }
+  return value as HealingMode;
+}
 
 export class SelfHealing {
   private readonly options: Required<Options>;
 
   constructor(private readonly store: LocatorStore, options: Options = {}) {
     this.options = {
-      timeoutMs: 1500, minScore: 0.8, minMargin: 0.1, autoUpdate: false,
+      timeoutMs: 5000, minScore: 0.8, minMargin: 0.1, heal: true,
       onRecovery: (event) => console.warn('[self-healing]', JSON.stringify(event)),
       ...options,
     };
@@ -54,21 +63,27 @@ export class SelfHealing {
 
   private async resolve(root: LocatorRoot, key: string): Promise<Resolution> {
     const definition = this.store.get(key);
-    const strategies = [definition.primary, ...(definition.fallbacks ?? [])];
+    const strategies = [definition.primary, ...(this.options.heal ? definition.fallbacks ?? [] : [])];
+    const locators = strategies.map((strategy) => buildLocator(root, strategy));
+    const event = (method: RecoveryEvent['method'], replacement: Strategy, score?: number): RecoveryEvent =>
+      ({ key, file: this.store.fileOf(key), method, original: definition.primary, replacement, ...(score === undefined ? {} : { score }) });
     let lastError: unknown;
-    for (const [index, strategy] of strategies.entries()) {
-      const locator = buildLocator(root, strategy);
-      try {
-        // Strict mode errors, invalid selectors and closed pages propagate unchanged.
-        await locator.waitFor({ state: 'visible', timeout: this.options.timeoutMs });
-        return { locator, event: index ? {
-          key, method: 'fallback', original: definition.primary, replacement: strategy,
-        } : undefined };
-      } catch (error) {
-        if (!(error instanceof errors.TimeoutError)) throw error;
-        lastError = error;
+    try {
+      // Race all strategies in one budget. A slow page waits as long as a plain locator would,
+      // so "not rendered yet" is never mistaken for "locator broken".
+      // Invalid selectors and closed pages are not timeouts, so they propagate unchanged.
+      await locators.reduce((union, locator) => union.or(locator)).filter({ visible: true }).first()
+        .waitFor({ timeout: this.options.timeoutMs });
+      for (const [index, locator] of locators.entries()) {
+        // isVisible() is strict: a strategy that matches several elements fails here, as a click would.
+        if (!await locator.count() || !await locator.isVisible()) continue;
+        return { locator, event: index ? event('fallback', strategies[index]) : undefined };
       }
+    } catch (error) {
+      if (!(error instanceof errors.TimeoutError)) throw error;
+      lastError = error;
     }
+    if (!this.options.heal) throw lastError;
 
     // An explicit fingerprint is required; a CSS expression is not element text.
     const candidates = await rankCandidates(root, definition.expected ?? {});
@@ -79,10 +94,11 @@ export class SelfHealing {
     }
     for (const replacement of best.strategies) {
       const locator = buildLocator(root, replacement);
-      if (await locator.count() !== 1 || !await locator.isVisible()) continue;
-      return { locator, event: { key, method: 'similarity', original: definition.primary, replacement, score: best.score } };
+      // Unique, visible, and the very element that scored: not merely one that looks like it.
+      if (await locator.count() !== 1 || !await locator.isVisible() || await best.element.and(locator).count() !== 1) continue;
+      return { locator, event: event('similarity', replacement, best.score) };
     }
-    throw new Error(`Self-healing refused for ${key}: no unique attribute selector`, { cause: lastError });
+    throw new Error(`Self-healing refused for ${key}: no unique, stable selector`, { cause: lastError });
   }
 
   private report(event?: RecoveryEvent) {
@@ -92,7 +108,6 @@ export class SelfHealing {
   async findElement(root: LocatorRoot, key: string): Promise<Locator> {
     const result = await this.resolve(root, key);
     this.report(result.event);
-    // Finding an element alone does not prove an interaction works; never persist here.
     return result.locator;
   }
 
@@ -100,9 +115,7 @@ export class SelfHealing {
     const result = await this.resolve(root, key);
     this.report(result.event);
     // Preserve Playwright's actionability checks. An overlay is not a broken locator.
+    // Nothing is written here: suggestions go to the report and `npm run healing:apply`.
     await result.locator.click({ timeout: timeoutMs });
-    if (this.options.autoUpdate && result.event?.method === 'similarity') {
-      this.store.updatePrimary(key, result.event.replacement);
-    }
   }
 }

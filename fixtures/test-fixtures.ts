@@ -7,11 +7,13 @@ import { DynamicLoadingPage } from '../pages/internet/DynamicLoadingPage';
 import { DynamicControlsPage } from '../pages/internet/DynamicControlsPage';
 import { ChallengingDomPage } from '../pages/internet/ChallengingDomPage';
 import { LocatorStore } from '../utils/self-healing/locator-store';
-import { SelfHealing } from '../utils/self-healing/self-healing';
-import type { RecoveryEvent } from '../utils/self-healing/types';
+import { healingMode, SelfHealing } from '../utils/self-healing/self-healing';
+import type { HealingMode, RecoveryEvent } from '../utils/self-healing/types';
 import { resolve } from 'node:path';
 
 type Pages = {
+  // SELF_HEALING=off|report|fail (default report). Override per file with test.use({ selfHealingMode }).
+  selfHealingMode: HealingMode;
   selfHealing: SelfHealing;
   loginPage: LoginPage;
   inventoryPage: InventoryPage;
@@ -28,10 +30,11 @@ type Pages = {
 const NOISE = /optimizely|\/js\/vendor\/\d+\.js|font-awesome|jquery-ui|foundation|forkme/;
 
 export const test = base.extend<Pages>({
-  selfHealing: async ({}, use, testInfo) => {
+  selfHealingMode: [healingMode(process.env.SELF_HEALING), { option: true }],
+  selfHealing: async ({ selfHealingMode }, use, testInfo) => {
     const events: RecoveryEvent[] = [];
-    const file = resolve(__dirname, '../locators/challenging-dom.json');
-    const healing = new SelfHealing(new LocatorStore([file]), {
+    const healing = new SelfHealing(LocatorStore.fromDir(resolve(__dirname, '../locators')), {
+      heal: selfHealingMode !== 'off',
       onRecovery: (event) => {
         events.push(event);
         testInfo.annotations.push({ type: 'self-healing', description: `${event.key}: ${event.method}` });
@@ -40,9 +43,15 @@ export const test = base.extend<Pages>({
     try {
       await use(healing);
     } finally {
+      // The reporter collects these into reports/self-healing.json.
       if (events.length) await testInfo.attach('self-healing.json', {
         body: JSON.stringify(events, null, 2), contentType: 'application/json',
       });
+    }
+    // The test ran to the end with the healed locator, so its own assertions were checked too.
+    if (selfHealingMode === 'fail' && events.length) {
+      throw new Error(`Self-healing was needed for ${[...new Set(events.map((event) => event.key))].join(', ')}. ` +
+        'Update locators/ (npm run healing:apply) or run with SELF_HEALING=report.');
     }
   },
   // Route on the context, not the page, so new tabs and pop-ups are covered too.
@@ -56,7 +65,7 @@ export const test = base.extend<Pages>({
   checkoutPage: async ({ page }, use) => { await use(new CheckoutPage(page)); },
   dynamicLoadingPage: async ({ page }, use) => { await use(new DynamicLoadingPage(page)); },
   dynamicControlsPage: async ({ page }, use) => { await use(new DynamicControlsPage(page)); },
-  challengingDomPage: async ({ page, selfHealing }, use) => { await use(new ChallengingDomPage(page, selfHealing)); },
+  challengingDomPage: async ({ page }, use) => { await use(new ChallengingDomPage(page)); },
 });
 
 export { expect } from '@playwright/test';

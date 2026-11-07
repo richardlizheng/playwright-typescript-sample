@@ -35,6 +35,8 @@ jobs:
           SAUCE_PASSWORD: ${{ secrets.SAUCE_PASSWORD }}
           BOOKER_USER: ${{ secrets.BOOKER_USER }}
           BOOKER_PASSWORD: ${{ secrets.BOOKER_PASSWORD }}
+          # Pull requests fail when a locator needed healing; main only reports it.
+          SELF_HEALING: ${{ github.event_name == 'pull_request' && 'fail' || 'report' }}
 
       # On failure, print a summary of failures by cause in the job log.
       - run: npm run triage

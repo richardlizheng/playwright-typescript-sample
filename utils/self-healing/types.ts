@@ -12,10 +12,20 @@ export type LocatorDefinition = {
   fallbacks?: Strategy[];
   expected?: Fingerprint;
 };
+
+// off: primary only, like a plain locator. report: heal and record. fail: heal, record, then fail the test.
+export const HEALING_MODES = ['off', 'report', 'fail'] as const;
+export type HealingMode = typeof HEALING_MODES[number];
+
 export type RecoveryEvent = {
   key: string;
+  // The locator JSON that owns the key, relative to the working directory.
+  file: string;
   method: 'fallback' | 'similarity';
   original: Strategy;
   replacement: Strategy;
   score?: number;
 };
+
+// One line of reports/self-healing.json, written by the reporter and read by `npm run healing:apply`.
+export type Suggestion = RecoveryEvent & { test: string; project: string };

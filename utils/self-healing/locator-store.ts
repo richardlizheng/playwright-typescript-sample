@@ -1,5 +1,5 @@
-import { closeSync, openSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { LocatorDefinition, Strategy } from './types';
 
@@ -13,15 +13,20 @@ function validStrategy(value: unknown): value is Strategy {
       (value.by === 'role' && typeof value.name === 'string' && value.name.trim() !== ''));
 }
 
+// The tag goes into a CSS selector during the DOM scan, so it must be a plain element name.
+function validFingerprint(value: unknown): boolean {
+  return object(value) && Object.entries(value).every(([field, text]) =>
+    ['tag', 'text', 'id', 'class', 'name', 'aria_label'].includes(field) && typeof text === 'string' &&
+    (field !== 'tag' || /^[a-z][a-z0-9-]*$/i.test(text)));
+}
+
 function read(file: string): Record<string, LocatorDefinition> {
   const data: unknown = JSON.parse(readFileSync(file, 'utf8'));
   if (!object(data)) throw new Error(`Invalid locator store: ${file}`);
   for (const [key, entry] of Object.entries(data)) {
     if (!object(entry) || !validStrategy(entry.primary) ||
       (entry.fallbacks !== undefined && (!Array.isArray(entry.fallbacks) || !entry.fallbacks.every(validStrategy))) ||
-      (entry.expected !== undefined && (!object(entry.expected) ||
-        !Object.entries(entry.expected).every(([field, value]) =>
-          ['tag', 'text', 'id', 'class', 'name', 'aria_label'].includes(field) && typeof value === 'string')))) {
+      (entry.expected !== undefined && !validFingerprint(entry.expected))) {
       throw new Error(`Invalid locator definition: ${key} in ${file}`);
     }
   }
@@ -30,50 +35,63 @@ function read(file: string): Record<string, LocatorDefinition> {
 
 export class LocatorStore {
   readonly files: string[];
+  // Parsed files keyed by path. A changed mtime means the file was edited and is read again.
+  private readonly cache = new Map<string, { mtimeMs: number; data: Record<string, LocatorDefinition> }>();
 
   constructor(files: string[]) {
     if (!files.length) throw new Error('At least one locator file is required');
     this.files = [...new Set(files.map((file) => resolve(file)))];
   }
 
-  private entries() {
-    const entries = new Map<string, { file: string; definition: LocatorDefinition }>();
+  // Every *.json file in a folder, so a new page needs a new file and no code change.
+  static fromDir(dir: string): LocatorStore {
+    return new LocatorStore(readdirSync(dir).filter((name) => name.endsWith('.json')).sort().map((name) => join(dir, name)));
+  }
+
+  private load(file: string) {
+    const { mtimeMs } = statSync(file);
+    const cached = this.cache.get(file);
+    if (cached?.mtimeMs === mtimeMs) return cached.data;
+    const data = read(file);
+    this.cache.set(file, { mtimeMs, data });
+    return data;
+  }
+
+  private entry(key: string) {
+    let found: { file: string; definition: LocatorDefinition } | undefined;
     for (const file of this.files) {
-      for (const [key, definition] of Object.entries(read(file))) {
-        if (entries.has(key)) throw new Error(`Duplicate locator key: ${key}`);
-        entries.set(key, { file, definition });
-      }
+      const data = this.load(file);
+      if (!Object.hasOwn(data, key)) continue;
+      if (found) throw new Error(`Duplicate locator key: ${key}`);
+      found = { file, definition: data[key] };
     }
-    return entries;
+    if (!found) throw new Error(`Locator key not found: ${key}`);
+    return found;
   }
 
   get(key: string): LocatorDefinition {
-    const entry = this.entries().get(key);
-    if (!entry) throw new Error(`Locator key not found: ${key}`);
-    return entry.definition;
+    return this.entry(key).definition;
   }
 
+  // Relative to the working directory, so reports do not leak the machine's absolute paths.
+  fileOf(key: string): string {
+    return relative(process.cwd(), this.entry(key).file);
+  }
+
+  // Called by `npm run healing:apply` after the run, never by a test, so there is a single writer.
   updatePrimary(key: string, strategy: Strategy): void {
     if (!validStrategy(strategy)) throw new Error('Invalid replacement strategy');
-    const entry = this.entries().get(key);
-    if (!entry) throw new Error(`Locator key not found: ${key}`);
-    // Fail explicitly on concurrent writers instead of losing another worker's update.
-    const lock = `${entry.file}.lock`;
-    const descriptor = openSync(lock, 'wx');
-    const temporary = `${entry.file}.${randomUUID()}.tmp`;
+    const { file } = this.entry(key);
+    const data = read(file);
+    data[key].primary = strategy;
+    // Write a sibling file, then rename: a reader never sees half a JSON file.
+    const temporary = `${file}.${randomUUID()}.tmp`;
     try {
-      const data = read(entry.file);
-      if (!Object.hasOwn(data, key)) throw new Error(`Locator key not found: ${key}`);
-      data[key].primary = strategy;
       writeFileSync(temporary, `${JSON.stringify(data, null, 2)}\n`, { flag: 'wx' });
-      renameSync(temporary, entry.file);
+      renameSync(temporary, file);
     } finally {
-      try {
-        rmSync(temporary, { force: true });
-      } finally {
-        closeSync(descriptor);
-        unlinkSync(lock);
-      }
+      rmSync(temporary, { force: true });
     }
+    this.cache.delete(file);
   }
 }

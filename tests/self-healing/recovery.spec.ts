@@ -7,7 +7,8 @@ import { buildLocator, SelfHealing } from '../../utils/self-healing/self-healing
 import { scoreFingerprint, similarity } from '../../utils/self-healing/dom-similarity';
 import type { LocatorDefinition, RecoveryEvent, Strategy } from '../../utils/self-healing/types';
 
-test.use({ storageState: { cookies: [], origins: [] } });
+// Pinned, so SELF_HEALING=fail in a PR pipeline does not fail the tests that heal on purpose.
+test.use({ storageState: { cookies: [], origins: [] }, selfHealingMode: 'report' });
 
 test.describe('self-healing recovery', { tag: '@regression' }, () => {
 
@@ -16,14 +17,14 @@ test.describe('self-healing recovery', { tag: '@regression' }, () => {
     expected: { tag: 'button', text: 'Log in', class: 'login-action' },
   };
 
-  function setup(testInfo: TestInfo, entry = definition, autoUpdate = false) {
+  function setup(testInfo: TestInfo, entry = definition, heal = true) {
     const file = testInfo.outputPath('locators.json');
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, JSON.stringify({ login: entry }));
     const store = new LocatorStore([file]);
     const events: RecoveryEvent[] = [];
     const healing = new SelfHealing(store, {
-      timeoutMs: 100, autoUpdate, onRecovery: (event) => events.push(event),
+      timeoutMs: 100, heal, onRecovery: (event) => events.push(event),
     });
     return { file, store, events, healing };
   }
@@ -38,57 +39,68 @@ test.describe('self-healing recovery', { tag: '@regression' }, () => {
     expect(events).toEqual([]);
   });
 
-  test('fallbacks run in order and do not rewrite the store', async ({ page }, testInfo) => {
-    const { healing, events, store } = setup(testInfo, {
-      ...definition, fallbacks: [{ by: 'css', value: '#missing' }, { by: 'text', value: 'Log in' }],
-    }, true);
+  test('the first listed strategy that matches wins and is reported', async ({ page }, testInfo) => {
+    const { healing, events } = setup(testInfo, {
+      ...definition, fallbacks: [{ by: 'css', value: '#missing' }, { by: 'text', value: 'Log in' }, { by: 'css', value: 'button' }],
+    });
     await page.setContent(loginHtml);
     await healing.click(page, 'login');
     await expect(page.locator('output')).toHaveText('done');
-    expect(events).toMatchObject([{ method: 'fallback', replacement: { by: 'text', value: 'Log in' } }]);
-    expect(store.get('login').primary).toEqual(definition.primary);
+    expect(events).toMatchObject([{ method: 'fallback', file: expect.stringMatching(/locators\.json$/), replacement: { by: 'text', value: 'Log in' } }]);
   });
 
-  test('DOM similarity recovers a changed id and defaults to read-only', async ({ page }, testInfo) => {
+  test('a slow primary is waited for, not healed', async ({ page }, testInfo) => {
+    const { file, events } = setup(testInfo, { ...definition, primary: { by: 'id', value: 'new-login' } });
+    const healing = new SelfHealing(new LocatorStore([file]), { timeoutMs: 2000, onRecovery: (event) => events.push(event) });
+    // The button arrives after 500 ms, well inside the shared budget.
+    await page.setContent(`<div id="slot"></div><output></output><script>setTimeout(() => { slot.innerHTML = ${JSON.stringify(loginHtml.replace('<output></output>', ''))}; }, 500)</script>`);
+    await healing.click(page, 'login');
+    await expect(page.locator('output')).toHaveText('done');
+    expect(events).toEqual([]);
+  });
+
+  test('DOM similarity recovers a changed id and leaves the JSON alone', async ({ page }, testInfo) => {
     const { healing, events, file } = setup(testInfo);
     const before = readFileSync(file, 'utf8');
     await page.setContent(loginHtml);
     await healing.click(page, 'login');
     await expect(page.locator('output')).toHaveText('done');
-    expect(events).toMatchObject([{ method: 'similarity', score: 1 }]);
+    // What the user sees beats markup details: role and name, not the id or class.
+    expect(events).toMatchObject([{ method: 'similarity', score: 1, replacement: { by: 'role', value: 'button', name: 'Log in' } }]);
     expect(readFileSync(file, 'utf8')).toBe(before);
   });
 
-  test('opt-in persistence happens after a successful click and is reused', async ({ page }, testInfo) => {
-    const { healing, events, store } = setup(testInfo, definition, true);
+  test('heal: false uses the primary only, like a plain locator', async ({ page }, testInfo) => {
+    const { healing, events } = setup(testInfo, { ...definition, fallbacks: [{ by: 'text', value: 'Log in' }] }, false);
     await page.setContent(loginHtml);
-    await healing.click(page, 'login');
-    expect(store.get('login').primary).toEqual({ by: 'css', value: 'button[id="new-login"]' });
-    await healing.click(page, 'login');
-    expect(events).toHaveLength(1);
-    await expect(page.locator('output')).toHaveText('done');
+    await expect(healing.click(page, 'login')).rejects.toThrow(/Timeout/);
+    expect(events).toEqual([]);
   });
 
-  test('finding alone never persists a suggestion', async ({ page }, testInfo) => {
-    const { healing, store } = setup(testInfo, definition, true);
-    await page.setContent(loginHtml);
-    await expect(await healing.findElement(page, 'login')).toHaveAttribute('id', 'new-login');
-    expect(store.get('login').primary).toEqual(definition.primary);
-  });
-
-  test('disabled candidate fails the action and cannot rewrite JSON', async ({ page }, testInfo) => {
-    const { healing, store } = setup(testInfo, definition, true);
+  test('disabled candidate fails the action', async ({ page }, testInfo) => {
+    const { healing } = setup(testInfo);
     await page.setContent('<button id="new-login" class="login-action" disabled>Log in</button>');
     await expect(healing.click(page, 'login', 150)).rejects.toThrow(/Timeout/);
-    expect(store.get('login').primary).toEqual(definition.primary);
   });
 
   test('an overlay is not bypassed by a forced click', async ({ page }, testInfo) => {
-    const { healing, store } = setup(testInfo, definition, true);
+    const { healing } = setup(testInfo);
     await page.setContent(`${loginHtml}<div style="position:fixed;inset:0;background:white;z-index:100"></div>`);
     await expect(healing.click(page, 'login', 150)).rejects.toThrow(/Timeout/);
     await expect(page.locator('output')).toBeEmpty();
-    expect(store.get('login').primary).toEqual(definition.primary);
+  });
+
+  test('a near-miss label is a different control, not a recovery', async ({ page }, testInfo) => {
+    const { healing } = setup(testInfo, { primary: definition.primary, expected: { tag: 'button', text: 'Accept' } });
+    await page.setContent('<button id="status">Accepted</button>');
+    await expect(healing.findElement(page, 'login')).rejects.toThrow(/weak or ambiguous/);
+  });
+
+  test('random-looking ids never become the healed selector', async ({ page }, testInfo) => {
+    const { healing, events } = setup(testInfo, { primary: definition.primary, expected: { tag: 'a', text: 'foo', class: 'button' } });
+    await page.setContent('<a id="a8f3c2" class="button">foo</a>');
+    await expect(await healing.findElement(page, 'login')).toHaveText('foo');
+    expect(events[0].replacement).toEqual({ by: 'css', value: 'a.button' });
   });
 
   test('equally plausible candidates are rejected', async ({ page }, testInfo) => {
@@ -146,33 +158,33 @@ test.describe('self-healing recovery', { tag: '@regression' }, () => {
     expect(events).toEqual([]);
   });
 
-  test('DOM recovery refuses an element without a unique attribute selector', async ({ page }, testInfo) => {
-    const { healing } = setup(testInfo, { primary: definition.primary, expected: { tag: 'button', text: 'Log in' } });
-    await page.setContent('<button>Log in</button>');
-    await expect(healing.findElement(page, 'login')).rejects.toThrow(/no unique attribute selector/);
+  test('DOM recovery refuses an element without a unique, stable selector', async ({ page }, testInfo) => {
+    const { healing } = setup(testInfo, { primary: definition.primary, expected: { tag: 'span', text: 'Log in' } });
+    await page.setContent('<span>Log in</span>');
+    await expect(healing.findElement(page, 'login')).rejects.toThrow(/no unique, stable selector/);
   });
 
-  test('page object fallback is limited to the selected table row', async ({ page, challengingDomPage }, testInfo) => {
+  test('fallback is limited to the selected table row', async ({ page, challengingDomPage, selfHealing }, testInfo) => {
     await page.setContent(`<table>
       <tr><td>Iuvaret1</td><td><a href="#edit">edit</a></td></tr>
       <tr><td>Iuvaret7</td><td><a href="#edit" onclick="document.querySelector('output').textContent='row7'">Edit row</a></td></tr>
     </table><output></output>`);
-    await challengingDomPage.editRow('Iuvaret7');
+    await selfHealing.click(challengingDomPage.row('Iuvaret7'), 'challengingDom.edit');
     await expect(page.locator('output')).toHaveText('row7');
     expect(testInfo.annotations).toContainEqual({ type: 'self-healing', description: 'challengingDom.edit: fallback' });
   });
 
-  test('missing row cannot recover to another row', async ({ page, challengingDomPage }) => {
+  test('missing row cannot recover to another row', async ({ page, challengingDomPage, selfHealing }) => {
     await page.setContent('<table><tr><td>Iuvaret1</td><td><a href="#edit">edit</a></td></tr></table>');
-    await expect(challengingDomPage.editRow('Iuvaret7')).rejects.toThrow(/Self-healing refused/);
+    await expect(selfHealing.click(challengingDomPage.row('Iuvaret7'), 'challengingDom.edit')).rejects.toThrow(/Self-healing refused/);
   });
 
-  test('page object DOM recovery stays inside the selected row', async ({ page, challengingDomPage }, testInfo) => {
+  test('DOM recovery stays inside the selected row', async ({ page, challengingDomPage, selfHealing }, testInfo) => {
     await page.setContent(`<table>
       <tr><td>Iuvaret1</td><td><a class="row-edit">edit</a></td></tr>
       <tr><td>Iuvaret7</td><td><a class="row-edit" onclick="document.querySelector('output').textContent='row7'">edit</a></td></tr>
     </table><output></output>`);
-    await challengingDomPage.editRow('Iuvaret7');
+    await selfHealing.click(challengingDomPage.row('Iuvaret7'), 'challengingDom.edit');
     await expect(page.locator('output')).toHaveText('row7');
     expect(testInfo.annotations).toContainEqual({ type: 'self-healing', description: 'challengingDom.edit: similarity' });
   });
@@ -190,10 +202,25 @@ test.describe('self-healing recovery', { tag: '@regression' }, () => {
   });
 
   test('healed CSS escapes punctuation in generated selectors', async ({ page }, testInfo) => {
-    const { healing } = setup(testInfo);
-    await page.setContent(loginHtml);
-    await page.locator('button').evaluate((button) => { button.id = 'login:"\\new'; });
+    const { healing, events } = setup(testInfo, { primary: definition.primary, expected: { tag: 'div', text: 'Log in', id: 'login:"\\new' } });
+    await page.setContent('<div onclick="document.querySelector(\'output\').textContent = \'done\'">Log in</div><output></output>');
+    await page.locator('div').evaluate((div) => { div.id = 'login:"\\new'; });
     await healing.click(page, 'login');
     await expect(page.locator('output')).toHaveText('done');
+    expect(events[0].replacement.by).toBe('css');
+  });
+});
+
+test.describe('self-healing in fail mode', { tag: '@regression' }, () => {
+  test.use({ storageState: { cookies: [], origins: [] }, selfHealingMode: 'fail' });
+
+  // The click still happens and is recorded; the fixture fails the test afterwards.
+  test('a recovery fails the test after it has run', async ({ page, challengingDomPage, selfHealing }) => {
+    test.fail();
+    await page.setContent(`<table><tr><td>Iuvaret7</td><td>
+      <a href="#edit" onclick="document.querySelector('output').textContent='row7'">Edit row</a>
+    </td></tr></table><output></output>`);
+    await selfHealing.click(challengingDomPage.row('Iuvaret7'), 'challengingDom.edit');
+    await expect(page.locator('output')).toHaveText('row7');
   });
 });

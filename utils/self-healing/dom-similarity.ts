@@ -1,3 +1,4 @@
+import type { Locator } from '@playwright/test';
 import type { Fingerprint, LocatorRoot, Strategy } from './types';
 
 const normalize = (value: string) => value.trim().replace(/\s+/g, ' ').toLowerCase();
@@ -37,32 +38,60 @@ const weights = { text: 0.35, id: 0.25, class: 0.15, name: 0.10, aria_label: 0.1
 export function scoreFingerprint(actual: Fingerprint, expected: Fingerprint): number {
   if (expected.tag && normalize(actual.tag ?? '') !== normalize(expected.tag)) return 0;
   const fields = (Object.keys(weights) as (keyof Fingerprint)[]).filter((key) => expected[key]?.trim());
-  if (!fields.some((key) => key !== 'tag')) return 0;
+  const features = fields.filter((key) => key !== 'tag');
+  if (!features.length) return 0;
+  // Short labels that differ by one word score high: "Accept" vs "Accepted" is 0.86.
+  // With text as the only evidence, a near miss is a different control, so require the same text.
+  if (features.length === 1 && features[0] === 'text' && normalize(actual.text ?? '') !== normalize(expected.text!)) return 0;
   const total = fields.reduce((sum, key) => sum + weights[key], 0);
   return fields.reduce((sum, key) => sum + weights[key] * similarity(actual[key] ?? '', expected[key]!), 0) / total;
 }
 
-export async function rankCandidates(root: LocatorRoot, expected: Fingerprint) {
-  const candidates = await root.locator('*:visible').evaluateAll((elements) => elements.map((element) => {
-    const tag = element.localName;
-    const attr = (name: string) => element.getAttribute(name) ?? '';
-    const selectors: string[] = [];
-    // Prefer testing contracts over ids, which may be random on each render.
-    for (const attribute of ['data-test', 'data-testid', 'id', 'name', 'aria-label']) {
-      if (attr(attribute)) selectors.push(`${tag}[${attribute}="${CSS.escape(attr(attribute))}"]`);
-    }
-    if (element.classList.length) selectors.push(`${tag}${[...element.classList].map((name) => `.${CSS.escape(name)}`).join('')}`);
-    return {
-      fingerprint: {
-        tag, text: (element as HTMLElement).innerText ?? element.textContent ?? '',
-        id: attr('id'), class: attr('class'), name: attr('name'), aria_label: attr('aria-label'),
-      },
-      selectors,
-    };
-  }));
-  return candidates.map((candidate) => ({
-    ...candidate,
+// Values that change between renders: digit runs, hex hashes, React useId (":r1:"), CSS-module hashes.
+// Such a value would heal this run and break the next, so it never becomes a selector.
+export const GENERATED = /\d{3,}|(?=[a-f]*\d)[0-9a-f]{6,}|^:|__[a-z0-9]{5,}$/i;
+
+export type Candidate = {
+  // The scanned element itself, used to prove a generated locator points at this element.
+  element: Locator;
+  fingerprint: Fingerprint;
+  strategies: Strategy[];
+  score: number;
+};
+
+export async function rankCandidates(root: LocatorRoot, expected: Fingerprint): Promise<Candidate[]> {
+  // Filter by tag in the browser: only the elements that can score are sent back to Node.
+  const scope = root.locator(`${expected.tag ?? '*'}:visible`);
+  const scanned = await scope.evaluateAll((elements, generatedSource) => {
+    const generated = new RegExp(generatedSource, 'i');
+    return elements.map((element) => {
+      const tag = element.localName;
+      const attr = (name: string) => element.getAttribute(name) ?? '';
+      // A long text belongs to a container, never to a control, so 200 characters are enough to compare.
+      const text = ((element as HTMLElement).innerText ?? element.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 200);
+      const role = attr('role') ||
+        (tag === 'button' || (tag === 'input' && ['button', 'submit', 'reset'].includes(attr('type'))) ? 'button' : '') ||
+        (tag === 'a' && element.hasAttribute('href') ? 'link' : '');
+      const roleName = attr('aria-label') || text;
+      const classes = [...element.classList].filter((name) => !generated.test(name));
+      // Most stable first: testing contracts, then what the user sees, then markup details.
+      const strategies = [
+        ...['data-test', 'data-testid'].filter((name) => attr(name)).map((name) => ({ by: 'css', value: `${tag}[${name}="${CSS.escape(attr(name))}"]` })),
+        ...(role && roleName && roleName.length <= 80 ? [{ by: 'role', value: role, name: roleName }] : []),
+        ...['name', 'aria-label'].filter((name) => attr(name)).map((name) => ({ by: 'css', value: `${tag}[${name}="${CSS.escape(attr(name))}"]` })),
+        ...(classes.length ? [{ by: 'css', value: `${tag}${classes.map((name) => `.${CSS.escape(name)}`).join('')}` }] : []),
+        ...(attr('id') && !generated.test(attr('id')) ? [{ by: 'css', value: `${tag}[id="${CSS.escape(attr('id'))}"]` }] : []),
+      ];
+      return {
+        fingerprint: { tag, text, id: attr('id'), class: attr('class'), name: attr('name'), aria_label: attr('aria-label') },
+        strategies,
+      };
+    });
+  }, GENERATED.source);
+  return scanned.map((candidate, index) => ({
+    element: scope.nth(index),
+    fingerprint: candidate.fingerprint,
+    strategies: candidate.strategies as Strategy[],
     score: scoreFingerprint(candidate.fingerprint, expected),
-    strategies: candidate.selectors.map((value): Strategy => ({ by: 'css', value })),
   })).sort((a, b) => b.score - a.score);
 }

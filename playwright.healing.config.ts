@@ -7,7 +7,11 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: 0,
   workers: 2,
-  reporter: [['list'], ['html', { open: 'never', outputFolder: 'playwright-report/healing' }]],
+  reporter: [
+    ['list'],
+    ['html', { open: 'never', outputFolder: 'playwright-report/healing' }],
+    ['./utils/self-healing/healing-reporter.ts', { outputFile: 'reports/healing/self-healing.json' }],
+  ],
   use: { testIdAttribute: 'data-test', trace: 'retain-on-failure' },
   projects: [
     { name: 'chrome', use: { ...devices['Desktop Chrome'], channel: 'chrome' } },
