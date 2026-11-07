@@ -18,6 +18,7 @@
     "test:chrome": "playwright test --project=chrome",
     "test:edge": "playwright test --project=edge",
     "test:api": "playwright test --project=api",
+    "test:healing": "playwright test --config=playwright.healing.config.ts",
     "test:stability": "playwright test --repeat-each=10",
     "report": "playwright show-report",
     "codegen": "playwright codegen",

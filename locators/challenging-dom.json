@@ -1,0 +1,7 @@
+{
+  "challengingDom.edit": {
+    "primary": { "by": "role", "value": "link", "name": "edit" },
+    "fallbacks": [{ "by": "css", "value": "a[href='#edit']" }],
+    "expected": { "tag": "a", "text": "edit" }
+  }
+}

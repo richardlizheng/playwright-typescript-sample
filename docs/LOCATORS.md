@@ -73,3 +73,11 @@ A quick check inside a test: `await expect(locator).toHaveCount(1)` before you a
 | Absolute XPath | Breaks on any layout change. | `no-restricted-syntax` rule in [eslint.config.mjs](../eslint.config.mjs) |
 
 `npm run lint` fails the build on any of these.
+
+## Self-healing example
+
+`ChallengingDomPage.editRow()` uses the same exact row scope, then attempts its primary locator,
+configured fallbacks, and finally DOM similarity. Recovery requires a clear winner and a unique
+selector; strict mode and normal click checks remain enabled. The fixture records recoveries in
+the report and leaves the locator JSON unchanged. See [SELF_HEALING.md](SELF_HEALING.md) for
+the Sloth-Python analysis, implementation differences, opt-in persistence and local test command.

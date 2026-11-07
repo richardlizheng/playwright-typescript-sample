@@ -14,6 +14,7 @@ UI and API tests for three public practice sites, written with Playwright and Ty
 | Setup from zero | [Quick start](#quick-start), [How I built this from zero](#how-i-built-this-from-zero) |
 | Credentials and secrets | [`.env.example`](.env.example), [`utils/env.ts`](utils/env.ts), [workflow](.github/workflows/playwright.yml), [`docs/SECRETS.md`](docs/SECRETS.md) |
 | Locators and verifying them | [`docs/LOCATORS.md`](docs/LOCATORS.md), [`pages/`](pages/) |
+| Self-healing locators (ported from Sloth-Python) | [`docs/SELF_HEALING.md`](docs/SELF_HEALING.md), [`utils/self-healing/`](utils/self-healing/), [`tests/self-healing/`](tests/self-healing/) |
 | Page objects and fixtures | [`pages/`](pages/), [`fixtures/test-fixtures.ts`](fixtures/test-fixtures.ts) |
 | Data-driven tests | [`tests/sauce/login.spec.ts`](tests/sauce/login.spec.ts), [`test-data/login-cases.json`](test-data/login-cases.json) |
 | End-to-end flow with steps | [`tests/sauce/checkout.spec.ts`](tests/sauce/checkout.spec.ts) |
@@ -51,6 +52,7 @@ Playwright prints a notice and keeps your installed browser.
 | `npm run test:e2e` | `@e2e` (the checkout flow) |
 | `npm run test:chrome` / `npm run test:edge` | One browser only |
 | `npm run test:api` | API tests only |
+| `npm run test:healing` | Local self-healing tests on Chrome + Edge; no `.env` or external sites |
 | `npm run test:stability` | Every test 10 times (`--repeat-each=10`) |
 | `npm run report` | Open the last HTML report |
 | `npm run codegen` | Record actions and pick locators |
@@ -71,6 +73,8 @@ Playwright prints a notice and keeps your installed browser.
 ```
 .github/workflows/playwright.yml   CI: lint, typecheck, tests on Chrome + Edge, report upload
 docs/                              LOCATORS.md, SECRETS.md, REPAIR_PLAYBOOK.md
+docs/SELF_HEALING.md                Python analysis, TypeScript changes and usage (中文)
+locators/                          JSON primary/fallback strategies and expected DOM features
 examples/before-after/             a brittle test and its fixed version (never run)
 fixtures/test-fixtures.ts          `test` extended with page objects
 pages/sauce/                       LoginPage, InventoryPage, CartPage, CheckoutPage
@@ -82,8 +86,11 @@ tests/sauce/                       login (data-driven), cart and checkout
 tests/internet/                    dynamic content, locators, dialogs / tabs / frames
 tests/ui-patterns/toast.spec.ts    30-second toast checked with Playwright's clock
 tests/api/booking.api.spec.ts      Restful Booker CRUD with a token
+tests/self-healing/                local browser recovery tests and locator-store checks
 utils/env.ts                       reads env variables, fails fast if one is missing
 utils/navigation.ts                openPage(): fails at once if the site returns an error page
+utils/self-healing/                scoped recovery, similarity scoring and optional JSON updates
+playwright.healing.config.ts       standalone self-healing tests without login setup
 playwright.config.ts               projects: setup, api, chrome, edge
 ```
 
@@ -109,6 +116,8 @@ How I verify a locator before I trust it:
 5. Strictness: if a locator matches 2+ elements, the action fails. Make it more specific.
 
 ESLint blocks `waitForTimeout`, `force: true`, `page.$` and absolute XPath. Details: [docs/LOCATORS.md](docs/LOCATORS.md).
+
+`ChallengingDomPage.editRow()` also demonstrates opt-in self-healing: primary locator → fallbacks → DOM similarity within the selected row. It rejects ambiguous recovery candidates, records recoveries in the report, and defaults to read-only JSON. It uses deterministic string matching, with no AI service or new dependency. Analysis of the original Python implementation and the adjusted TypeScript behavior: [docs/SELF_HEALING.md](docs/SELF_HEALING.md).
 
 ## Credentials and secrets
 

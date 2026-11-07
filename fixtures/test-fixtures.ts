@@ -6,8 +6,13 @@ import { CheckoutPage } from '../pages/sauce/CheckoutPage';
 import { DynamicLoadingPage } from '../pages/internet/DynamicLoadingPage';
 import { DynamicControlsPage } from '../pages/internet/DynamicControlsPage';
 import { ChallengingDomPage } from '../pages/internet/ChallengingDomPage';
+import { LocatorStore } from '../utils/self-healing/locator-store';
+import { SelfHealing } from '../utils/self-healing/self-healing';
+import type { RecoveryEvent } from '../utils/self-healing/types';
+import { resolve } from 'node:path';
 
 type Pages = {
+  selfHealing: SelfHealing;
   loginPage: LoginPage;
   inventoryPage: InventoryPage;
   cartPage: CartPage;
@@ -23,6 +28,23 @@ type Pages = {
 const NOISE = /optimizely|\/js\/vendor\/\d+\.js|font-awesome|jquery-ui|foundation|forkme/;
 
 export const test = base.extend<Pages>({
+  selfHealing: async ({}, use, testInfo) => {
+    const events: RecoveryEvent[] = [];
+    const file = resolve(__dirname, '../locators/challenging-dom.json');
+    const healing = new SelfHealing(new LocatorStore([file]), {
+      onRecovery: (event) => {
+        events.push(event);
+        testInfo.annotations.push({ type: 'self-healing', description: `${event.key}: ${event.method}` });
+      },
+    });
+    try {
+      await use(healing);
+    } finally {
+      if (events.length) await testInfo.attach('self-healing.json', {
+        body: JSON.stringify(events, null, 2), contentType: 'application/json',
+      });
+    }
+  },
   // Route on the context, not the page, so new tabs and pop-ups are covered too.
   context: async ({ context }, use) => {
     await context.route(NOISE, (route) => route.abort());
@@ -34,7 +56,7 @@ export const test = base.extend<Pages>({
   checkoutPage: async ({ page }, use) => { await use(new CheckoutPage(page)); },
   dynamicLoadingPage: async ({ page }, use) => { await use(new DynamicLoadingPage(page)); },
   dynamicControlsPage: async ({ page }, use) => { await use(new DynamicControlsPage(page)); },
-  challengingDomPage: async ({ page }, use) => { await use(new ChallengingDomPage(page)); },
+  challengingDomPage: async ({ page, selfHealing }, use) => { await use(new ChallengingDomPage(page, selfHealing)); },
 });
 
 export { expect } from '@playwright/test';
