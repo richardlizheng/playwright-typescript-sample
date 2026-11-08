@@ -6,6 +6,7 @@ import playwright from 'eslint-plugin-playwright';
 export default defineConfig(
   {
     ignores: ['node_modules/', 'playwright-report/', 'test-results/', 'reports/', '.auth/',
+      'allure-results/', 'allure-report/', 'allure-history/',
       // The "before" file breaks the rules on purpose. It is an example, not a test.
       'examples/before-after/before.spec.ts'],
   },

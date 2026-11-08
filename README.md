@@ -24,6 +24,7 @@ UI and API tests for three public practice sites, written with Playwright and Ty
 | Log in once, reuse the session | [`tests/auth.setup.ts`](tests/auth.setup.ts), [`playwright.config.ts`](playwright.config.ts) |
 | API tests | [`tests/api/booking.api.spec.ts`](tests/api/booking.api.spec.ts) |
 | Edge and Chrome | [`playwright.config.ts`](playwright.config.ts) |
+| Reports: Playwright HTML, Allure, JUnit | [`playwright.config.ts`](playwright.config.ts), [`allurerc.mjs`](allurerc.mjs), [Reports](#reports) |
 | CI | [`.github/workflows/playwright.yml`](.github/workflows/playwright.yml), [`azure-pipelines.yml`](azure-pipelines.yml) ([setup](docs/AZURE_DEVOPS.md)) |
 | Lint rules against flaky patterns | [`eslint.config.mjs`](eslint.config.mjs) |
 | Repairing a broken suite | [`docs/REPAIR_PLAYBOOK.md`](docs/REPAIR_PLAYBOOK.md), [`scripts/triage-failures.ts`](scripts/triage-failures.ts), [`examples/before-after/`](examples/before-after/) |
@@ -56,6 +57,8 @@ Playwright prints a notice and keeps your installed browser.
 | `npm run healing:apply` | Show the locator changes suggested by the last run; `-- --write` applies them |
 | `npm run test:stability` | Every test 10 times (`--repeat-each=10`) |
 | `npm run report` | Open the last HTML report |
+| `npm run allure:run` | Run all tests and build the Allure report from this run only |
+| `npm run allure:open` | Open the last Allure report |
 | `npm run codegen` | Record actions and pick locators |
 | `npm run lint` / `npm run typecheck` | ESLint / `tsc --noEmit` |
 | `npm run triage` | Group failures in the last run by cause |
@@ -95,6 +98,7 @@ utils/navigation.ts                openPage(): fails at once if the site returns
 utils/self-healing/                scoped recovery, similarity scoring, suggestion reporter
 playwright.healing.config.ts       standalone self-healing tests without login setup
 playwright.config.ts               projects: setup, api, chrome, edge
+allurerc.mjs                       Allure 3 report settings (single HTML file, run history)
 ```
 
 Page objects do actions. Tests do assertions. The one exception is `expectLoaded()`, which checks that a page is open.
@@ -136,7 +140,7 @@ Jenkins and Azure DevOps versions: [docs/SECRETS.md](docs/SECRETS.md). Azure Pip
 ## Running in CI
 
 The workflow runs on every push to `main`, on pull requests, and on demand:
-`npm ci` → lint → typecheck → install Chrome and Edge → run all projects → upload the HTML report (kept 14 days).
+`npm ci` → lint → typecheck → install Chrome and Edge → run all projects → upload the HTML report → build and upload the Allure report (both kept 14 days).
 [`azure-pipelines.yml`](azure-pipelines.yml) runs the same steps in Azure DevOps and also publishes JUnit results to the run's *Tests* tab.
 
 Setup on GitHub: *Settings → Secrets and variables → Actions*.
@@ -147,6 +151,21 @@ Setup on GitHub: *Settings → Secrets and variables → Actions*.
 
 There are 2 workers (local and CI). CI also uses 2 retries. Traces are kept on the first retry, and screenshots and video on failure.
 If any test fails, `npm run triage` prints a summary of the failures by cause in the job log.
+
+## Reports
+
+| Report | Best for | Where |
+|---|---|---|
+| Playwright HTML | Debugging one failure: trace viewer, video, screenshots | `playwright-report/`, CI artifact `playwright-report` |
+| Allure | Sharing results: history and trends across runs, flaky and new-failure markers, filters by tag | `allure-report/index.html`, CI artifact `allure-report` |
+| JUnit XML | CI dashboards: the Azure DevOps *Tests* tab, Jenkins `junit` | `reports/junit.xml` |
+
+Allure 3 is a Node.js CLI, so no Java is needed. The report is one `index.html` that opens straight from a downloaded artifact.
+On GitHub Actions, the Allure history is kept in the Actions cache, so each report shows the trend of the last 20 runs.
+`allure-results/` is not cleared between runs, so build a local report with `npm run allure:run`: it reads only the results of the run it starts.
+The `dompurify` override in `package.json` lifts Allure's pinned copy to the patched 3.4.17.
+
+![Allure report: 96 tests passed, grouped by project and spec file](docs/images/allure-report.png)
 
 HTML report from a local run:
 

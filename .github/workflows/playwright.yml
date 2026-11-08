@@ -23,6 +23,15 @@ jobs:
 
       - run: npx playwright install --with-deps chrome msedge ffmpeg
 
+      # Allure history from earlier runs on this branch (or main): trend charts and flaky markers.
+      - uses: actions/cache/restore@v6
+        with:
+          path: allure-history
+          key: allure-history-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            allure-history-${{ github.ref_name }}-
+            allure-history-main-
+
       # URLs are not secret, so they are repository variables.
       # Credentials are secrets: masked in logs and never written in this file.
       # Set both in GitHub > Settings > Secrets and variables > Actions.
@@ -49,4 +58,23 @@ jobs:
           path: |
             playwright-report/
             reports/
+          retention-days: 14
+
+      # Skipped when lint or typecheck failed and no test ran.
+      - run: npx allure generate allure-results
+        if: ${{ !cancelled() && hashFiles('allure-results/**') != '' }}
+
+      # cache/save instead of actions/cache, so a failed run is kept in the history too.
+      - uses: actions/cache/save@v6
+        if: ${{ !cancelled() && hashFiles('allure-history/**') != '' }}
+        with:
+          path: allure-history
+          key: allure-history-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      # A single index.html: download, unzip, open in a browser.
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && hashFiles('allure-report/**') != '' }}
+        with:
+          name: allure-report
+          path: allure-report/
           retention-days: 14

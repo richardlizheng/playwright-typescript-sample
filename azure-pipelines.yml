@@ -68,6 +68,15 @@ jobs:
         displayName: Triage failures
         condition: failed()
 
+      # Allure report as one index.html. No Allure history here: the Tests tab already keeps it.
+      # Skipped when lint or typecheck failed and no test ran.
+      - script: |
+          if [ -d allure-results ]; then
+            npx allure generate allure-results && echo "##vso[task.setvariable variable=ALLURE_REPORT]true"
+          fi
+        displayName: Build Allure report
+        condition: succeededOrFailed()
+
       # Results appear in the run's Tests tab, with retries and history.
       - task: PublishTestResults@2
         displayName: Publish test results
@@ -91,3 +100,9 @@ jobs:
         inputs:
           targetPath: reports
           artifact: reports-$(System.JobAttempt)
+      - task: PublishPipelineArtifact@1
+        displayName: Upload Allure report
+        condition: and(succeededOrFailed(), eq(variables['ALLURE_REPORT'], 'true'))
+        inputs:
+          targetPath: allure-report
+          artifact: allure-report-$(System.JobAttempt)

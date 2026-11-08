@@ -25,6 +25,11 @@ export default defineConfig({
     // For the Tests tab in Azure DevOps (PublishTestResults@2) and Jenkins (junit step).
     ['junit', { outputFile: 'reports/junit.xml' }],
     ['./utils/self-healing/healing-reporter.ts'],
+    // Raw results for Allure: `npm run allure:generate` turns them into allure-report/.
+    ['allure-playwright', {
+      resultsDir: 'allure-results',
+      environmentInfo: { node: process.version, os: `${process.platform} ${process.arch}` },
+    }],
   ],
   use: {
     baseURL: env.sauceBaseUrl,

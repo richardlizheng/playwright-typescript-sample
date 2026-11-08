@@ -41,7 +41,7 @@ Require status checks → the Azure Pipelines check for this pipeline*.
 | Where | What |
 |---|---|
 | *Tests* tab | JUnit results from `reports/junit.xml`: pass/fail per test, retries, history across runs |
-| Artifacts | `playwright-report-<attempt>` (HTML report, traces, video), `reports-<attempt>` (JSON results, `self-healing.json`) |
+| Artifacts | `playwright-report-<attempt>` (HTML report, traces, video), `allure-report-<attempt>` (one `index.html`), `reports-<attempt>` (JSON results, `self-healing.json`) |
 | Job log | `npm run triage` summary when a test fails; self-healing summary when a locator was recovered |
 
 Download the HTML report artifact and open it with `npx playwright show-report <folder>`.
@@ -56,3 +56,4 @@ Download the HTML report artifact and open it with `npx playwright show-report <
 | npm cache | `setup-node` with `cache: npm` | `Cache@2` keyed on `package-lock.json` |
 | Report upload | `upload-artifact`, kept 14 days | `PublishPipelineArtifact@1`, kept by the project's retention policy |
 | Test results UI | none built in | *Tests* tab via `PublishTestResults@2` |
+| Allure history | Actions cache, trend of the last 20 runs | not kept: the *Tests* tab already shows history |
