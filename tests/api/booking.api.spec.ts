@@ -26,7 +26,9 @@ async function getToken(request: APIRequestContext): Promise<string> {
   });
   expect(response.status()).toBe(200);
   const body = await response.json();
-  expect(body.token, 'auth should return a token, check BOOKER_USER / BOOKER_PASSWORD').toBeTruthy();
+  // Lengths, not values: enough to spot an empty variable or a stray space without leaking a secret.
+  const hint = `reason="${body.reason}", BOOKER_USER length ${env.bookerUser.length}, BOOKER_PASSWORD length ${env.bookerPassword.length}`;
+  expect(body.token, `auth should return a token, check BOOKER_USER / BOOKER_PASSWORD (${hint})`).toBeTruthy();
   return body.token;
 }
 
