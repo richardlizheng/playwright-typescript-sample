@@ -24,7 +24,10 @@ test.describe('self-healing recovery', { tag: '@regression' }, () => {
     const store = new LocatorStore([file]);
     const events: RecoveryEvent[] = [];
     const healing = new SelfHealing(store, {
-      timeoutMs: 100, heal, onRecovery: (event) => events.push(event),
+      // Generous on purpose: the element is already on the page, so a hit returns at once.
+      // 100 ms was enough locally but not on a loaded CI agent, where a slow first
+      // evaluation looked like "not found" and the test healed by similarity instead of fallback.
+      timeoutMs: 1000, heal, onRecovery: (event) => events.push(event),
     });
     return { file, store, events, healing };
   }
