@@ -40,6 +40,7 @@ Require status checks → the Azure Pipelines check for this pipeline*.
 
 | Where | What |
 |---|---|
+| *Allure Report* tab | The Allure report inside the run page. Needs the **Allure Report** extension (publisher Qameta) installed in the organization and the `PublishAllureReport@2` step in the YAML; runs from before that step existed have no tab |
 | *Tests* tab | JUnit results from `reports/junit.xml`: pass/fail per test, retries, history across runs |
 | Artifacts | `playwright-report-<attempt>` (HTML report, traces, video), `allure-report-<attempt>` (one `index.html`), `reports-<attempt>` (JSON results, `self-healing.json`) |
 | Job log | `npm run triage` summary when a test fails; self-healing summary when a locator was recovered |

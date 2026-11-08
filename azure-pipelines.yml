@@ -77,6 +77,14 @@ jobs:
         displayName: Build Allure report
         condition: succeededOrFailed()
 
+      # Adds an "Allure Report" tab to the run. Needs the Allure Report extension (publisher Qameta)
+      # installed in the organization. The tab only accepts a single-file report: see allurerc.mjs.
+      - task: PublishAllureReport@2
+        displayName: Publish Allure Report tab
+        condition: and(succeededOrFailed(), eq(variables['ALLURE_REPORT'], 'true'))
+        inputs:
+          reportDir: allure-report
+
       # Results appear in the run's Tests tab, with retries and history.
       - task: PublishTestResults@2
         displayName: Publish test results
